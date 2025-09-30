@@ -1,115 +1,127 @@
-import os
 import json
+import logging
 from telegram import Update
-from telegram.ext import Application, CommandHandler, ContextTypes, MessageHandler, filters
+from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
+
+# Enable logging
+logging.basicConfig(
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO
+)
+logger = logging.getLogger(__name__)
 
 QUIZ_FILE = "quizzes.json"
+current_quiz = {}
+user_scores = {}
 
-# BOT TOKEN from Heroku Config Vars
-BOT_TOKEN = os.getenv("BOT_TOKEN")
-if not BOT_TOKEN:
-    raise ValueError("❌ BOT_TOKEN not set in Heroku Config Vars")
-
-# Load quizzes
+# ---------- QUIZ STORAGE ----------
 def load_quizzes():
-    if not os.path.exists(QUIZ_FILE):
+    try:
+        with open(QUIZ_FILE, "r") as f:
+            return json.load(f)
+    except FileNotFoundError:
         return []
-    with open(QUIZ_FILE, "r") as f:
-        return json.load(f)
+    except json.JSONDecodeError:
+        return []
 
-# Save quizzes
 def save_quizzes(quizzes):
     with open(QUIZ_FILE, "w") as f:
         json.dump(quizzes, f, indent=4)
 
-# Start command
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("✅ Quiz Bot is running!\n\n/addquiz - add a new quiz\n/startquiz - start quiz in group")
+# ---------- ADD QUIZ ----------
+async def add_quiz(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if len(context.args) < 2:
+        await update.message.reply_text("Usage: /addquiz <question> | <answer>")
+        return
 
-# Add quiz
-async def addquiz(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    try:
-        text = update.message.text.split("|")
-        if len(text) != 5:
-            await update.message.reply_text("❌ Format: Question | Option1 | Option2 | Option3 | CorrectIndex")
-            return
-        _, q, o1, o2, o3, correct = text[0], text[1], text[2], text[3], text[4], None
-        correct = int(text[4].strip())
-        quiz = {
-            "question": q.strip(),
-            "options": [o1.strip(), o2.strip(), o3.strip()],
-            "answer": correct
-        }
-        quizzes = load_quizzes()
-        quizzes.append(quiz)
-        save_quizzes(quizzes)
-        await update.message.reply_text("✅ Quiz added successfully!")
-    except Exception as e:
-        await update.message.reply_text(f"⚠ Error: {e}")
+    text = " ".join(context.args)
+    if "|" not in text:
+        await update.message.reply_text("Please separate question and answer with |")
+        return
 
-# Start quiz in group
-user_scores = {}
-
-async def startquiz(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    question, answer = text.split("|", 1)
     quizzes = load_quizzes()
+    quizzes.append({"question": question.strip(), "answer": answer.strip().lower()})
+    save_quizzes(quizzes)
+
+    await update.message.reply_text("✅ Quiz added successfully!")
+
+# ---------- START QUIZ ----------
+async def start_quiz(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    global current_quiz, user_scores
+    quizzes = load_quizzes()
+
     if not quizzes:
-        await update.message.reply_text("❌ No quizzes found. Use /addquiz first.")
+        await update.message.reply_text("❌ No quizzes available. Add some using /addquiz.")
         return
 
-    user_scores.clear()
-    for i, quiz in enumerate(quizzes, start=1):
-        question = quiz["question"]
-        opts = quiz["options"]
-        await update.message.reply_text(
-            f"📌 Q{i}: {question}\n1️⃣ {opts[0]}\n2️⃣ {opts[1]}\n3️⃣ {opts[2]}\n\nReply with the option number!"
-        )
-        context.chat_data["current_quiz"] = i - 1
+    current_quiz["quizzes"] = quizzes
+    current_quiz["index"] = 0
+    user_scores = {}
 
-# Handle answers
+    await update.message.reply_text("🎉 Quiz is starting now!")
+    await ask_question(update, context)
+
+async def ask_question(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    index = current_quiz.get("index", 0)
+    quizzes = current_quiz.get("quizzes", [])
+
+    if index < len(quizzes):
+        question = quizzes[index]["question"]
+        await update.message.reply_text(f"❓ Q{index+1}: {question}")
+    else:
+        await end_quiz(update)
+
+# ---------- HANDLE ANSWERS ----------
 async def handle_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user = update.message.from_user
-    text = update.message.text.strip()
-    if not text.isdigit():
-        return
-    choice = int(text)
-
-    quizzes = load_quizzes()
-    current = context.chat_data.get("current_quiz")
-    if current is None or current >= len(quizzes):
+    global current_quiz, user_scores
+    if "quizzes" not in current_quiz:
         return
 
-    correct = quizzes[current]["answer"]
-    if user.id not in user_scores:
-        user_scores[user.id] = {"name": user.first_name, "score": 0}
+    index = current_quiz.get("index", 0)
+    quizzes = current_quiz.get("quizzes", [])
 
-    if choice == correct:
-        user_scores[user.id]["score"] += 1
-        await update.message.reply_text(f"✅ Correct, {user.first_name}!")
+    if index >= len(quizzes):
+        return
+
+    correct_answer = quizzes[index]["answer"]
+    user_answer = update.message.text.strip().lower()
+    user_id = update.message.from_user.id
+    username = update.message.from_user.first_name
+
+    if user_answer == correct_answer:
+        user_scores[user_id] = user_scores.get(user_id, {"name": username, "score": 0})
+        user_scores[user_id]["score"] += 1
+        await update.message.reply_text(f"✅ Correct, {username}!")
+        current_quiz["index"] += 1
+        await ask_question(update, context)
     else:
-        await update.message.reply_text(f"❌ Wrong, {user.first_name}!")
+        await update.message.reply_text(f"❌ Wrong, {username}! Try again.")
 
-    # Last quiz? Show results
-    if current == len(quizzes) - 1:
-        results = "🏆 Final Results:\n"
-        for uid, data in user_scores.items():
-            results += f"{data['name']}: {data['score']} correct\n"
-        await update.message.reply_text(results)
-    else:
-        context.chat_data["current_quiz"] = current + 1
-        next_q = quizzes[current + 1]
-        await update.message.reply_text(
-            f"📌 Q{current+2}: {next_q['question']}\n1️⃣ {next_q['options'][0]}\n2️⃣ {next_q['options'][1]}\n3️⃣ {next_q['options'][2]}\n\nReply with the option number!"
-        )
+# ---------- END QUIZ ----------
+async def end_quiz(update: Update):
+    global user_scores
+    if not user_scores:
+        await update.message.reply_text("😅 No correct answers were given.")
+        return
 
-# Main
+    results = "🏆 Final Scores:\n"
+    for uid, data in sorted(user_scores.items(), key=lambda x: x[1]["score"], reverse=True):
+        results += f"{data['name']}: {data['score']} points\n"
+
+    await update.message.reply_text(results)
+
+# ---------- MAIN ----------
 def main():
-    app = Application.builder().token(BOT_TOKEN).build()
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("addquiz", addquiz))
-    app.add_handler(CommandHandler("startquiz", startquiz))
+    import os
+    TOKEN = os.getenv("BOT_TOKEN")  # Add BOT_TOKEN in Heroku Config Vars
+
+    app = Application.builder().token(TOKEN).build()
+
+    app.add_handler(CommandHandler("addquiz", add_quiz))
+    app.add_handler(CommandHandler("startquiz", start_quiz))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_answer))
 
-    print("🚀 Bot started...")
+    print("🤖 Bot is running...")
     app.run_polling()
 
 if __name__ == "__main__":
