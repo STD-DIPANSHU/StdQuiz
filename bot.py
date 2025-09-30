@@ -1,9 +1,13 @@
 import logging
+import os
 from telegram import Update, Poll
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
 
-# 🔑 Replace with your Bot Token
-BOT_TOKEN = "YOUR_BOT_TOKEN"
+# 🔑 Bot token will be read from Heroku Config Vars
+BOT_TOKEN = os.getenv("BOT_TOKEN")
+
+if not BOT_TOKEN:
+    raise ValueError("❌ BOT_TOKEN not found! Please set it in Heroku Config Vars.")
 
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO
@@ -23,7 +27,12 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def newquiz(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.message.from_user.id
     QUIZ_DATA[user_id] = {"questions": []}
-    await update.message.reply_text("Send me your quiz question in format:\n\n`Question | Option1 | Option2 | Option3 | CorrectIndex`\nExample:\n`What is 2+2? | 2 | 4 | 5 | 2`", parse_mode="Markdown")
+    await update.message.reply_text(
+        "Send me your quiz question in format:\n\n"
+        "`Question | Option1 | Option2 | Option3 | CorrectIndex`\n\n"
+        "Example:\n`What is 2+2? | 2 | 4 | 5 | 2`",
+        parse_mode="Markdown"
+    )
 
 async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.message.from_user.id
@@ -37,8 +46,8 @@ async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         ans = int(ans) - 1
         QUIZ_DATA[user_id]["questions"].append((q, [o1, o2, o3], ans))
         await update.message.reply_text("✅ Question added! Send another or type /done to finish.")
-    except:
-        await update.message.reply_text("❌ Invalid format. Try again!")
+    except Exception as e:
+        await update.message.reply_text(f"❌ Invalid format. Try again!\nError: {e}")
 
 async def done(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.message.from_user.id
@@ -59,7 +68,11 @@ async def done(update: Update, context: ContextTypes.DEFAULT_TYPE):
     del QUIZ_DATA[user_id]
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("Use /newquiz to create quiz.\nFormat:\n`Question | Opt1 | Opt2 | Opt3 | CorrectIndex`")
+    await update.message.reply_text(
+        "Use /newquiz to create quiz.\n\n"
+        "Format:\n`Question | Opt1 | Opt2 | Opt3 | CorrectIndex`",
+        parse_mode="Markdown"
+    )
 
 def main():
     app = Application.builder().token(BOT_TOKEN).build()
