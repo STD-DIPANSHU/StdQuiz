@@ -1,18 +1,23 @@
 {
-  "name": "telegram-quiz-bot",
-  "description": "A simple Telegram Quiz Bot built with python-telegram-bot and deployable to Heroku.",
-  "repository": "https://github.com/yourusername/quiz-bot",
-  "keywords": ["telegram", "quiz", "bot", "python", "heroku"],
+  "name": "QuizBot",
+  "description": "Telegram Quiz Bot with MongoDB",
+  "repository": "https://github.com/yourname/quizbot",
+  "keywords": ["telegram", "bot", "quiz", "mongodb"],
   "env": {
     "BOT_TOKEN": {
-      "description": "Telegram Bot API Token from BotFather",
-      "required": true
+      "description": "Telegram Bot Token from BotFather",
+      "value": ""
+    },
+    "MONGO_URL": {
+      "description": "MongoDB connection string (MongoDB Atlas or mLab)",
+      "value": "mongodb+srv://<username>:<password>@cluster0.mongodb.net/?retryWrites=true&w=majority"
     }
   },
   "formation": {
     "worker": {
-      "quantity": 1
+      "quantity": 1,
+      "size": "free"
     }
   },
-  "stack": "heroku-22"
+  "addons": []
 }
