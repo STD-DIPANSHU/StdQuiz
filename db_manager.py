@@ -1,35 +1,29 @@
 from pymongo import MongoClient
-from bson.objectid import ObjectId
+import os
 
-MONGO_URL = "mongodb://localhost:27017"  # ya MongoDB Atlas ka URL
+MONGO_URL = os.getenv("MONGO_URL", "mongodb://localhost:27017/")
 client = MongoClient(MONGO_URL)
 db = client["quizbot"]
-quizzes_col = db["quizzes"]
 
-def create_quiz(user_id, title, description=""):
-    quiz = {
-        "user_id": user_id,
-        "title": title,
-        "description": description,
-        "questions": []
-    }
-    result = quizzes_col.insert_one(quiz)
-    return str(result.inserted_id)
+# Quiz collection
+quiz_col = db["quizzes"]
+# Scores collection
+score_col = db["scores"]
 
-def add_question(quiz_id, question, options, correct_index):
-    quizzes_col.update_one(
-        {"_id": ObjectId(quiz_id)},
-        {"$push": {
-            "questions": {
-                "question": question,
-                "options": options,
-                "correct_index": correct_index
-            }
-        }}
-    )
+def save_quiz(owner_id, title, questions):
+    quiz = {"owner_id": owner_id, "title": title, "questions": questions}
+    result = quiz_col.insert_one(quiz)
+    return result.inserted_id
 
 def get_quiz(quiz_id):
-    return quizzes_col.find_one({"_id": ObjectId(quiz_id)})
+    return quiz_col.find_one({"_id": quiz_id})
 
-def get_user_quizzes(user_id):
-    return list(quizzes_col.find({"user_id": user_id}))
+def save_score(user_id, group_id, quiz_id, correct):
+    score_col.update_one(
+        {"user_id": user_id, "group_id": group_id, "quiz_id": quiz_id},
+        {"$inc": {"correct": correct}},
+        upsert=True
+    )
+
+def get_leaderboard(group_id, quiz_id):
+    return list(score_col.find({"group_id": group_id, "quiz_id": quiz_id}))
