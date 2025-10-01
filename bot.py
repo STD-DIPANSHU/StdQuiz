@@ -1,122 +1,91 @@
+import os
 import logging
-from telegram import Update, ReplyKeyboardMarkup
+from telegram import Update
 from telegram.ext import (
-    ApplicationBuilder,
+    Application,
     CommandHandler,
     MessageHandler,
     ContextTypes,
-    filters
+    filters,
 )
-from config import BOT_TOKEN
-import db_manager
+from db_manager import DBManager
 
-logging.basicConfig(level=logging.INFO)
+# ================== LOGGING ==================
+logging.basicConfig(
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    level=logging.INFO
+)
 logger = logging.getLogger(__name__)
 
-# temporary state for quiz creation
-user_quiz_data = {}
+# ================== ENV VARS ==================
+BOT_TOKEN = os.getenv("BOT_TOKEN")
+MONGO_URL = os.getenv("MONGO_URL")
 
+# Debugging print
+print("DEBUG BOT TOKEN:", BOT_TOKEN)
+print("DEBUG MONGO URL:", MONGO_URL)
+
+if not BOT_TOKEN:
+    raise ValueError("❌ BOT_TOKEN is missing! Did you set it in Heroku?")
+
+if not MONGO_URL:
+    raise ValueError("❌ MONGO_URL is missing! Did you set it in Heroku?")
+
+# ================== DB MANAGER ==================
+db = DBManager(MONGO_URL)
+
+# ================== COMMAND HANDLERS ==================
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("Welcome! Use /createquiz to make a quiz or /quiz to play.")
-
-# ---------------- CREATE QUIZ ----------------
-async def create_quiz(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("Send me your quiz in format:\n\nQuestion | Option1,Option2,Option3,Option4 | CorrectOption")
-    return
-
-async def handle_quiz_creation(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    try:
-        parts = update.message.text.split("|")
-        if len(parts) != 3:
-            await update.message.reply_text("❌ Wrong format. Use:\nQuestion | Option1,Option2 | CorrectOption")
-            return
-
-        question = parts[0].strip()
-        options = [opt.strip() for opt in parts[1].split(",")]
-        correct_answer = parts[2].strip()
-
-        db_manager.save_quiz(update.effective_user.id, question, options, correct_answer)
-        await update.message.reply_text("✅ Quiz saved successfully!")
-
-    except Exception as e:
-        logger.error(e)
-        await update.message.reply_text("❌ Error saving quiz.")
-
-# ---------------- PLAY QUIZ ----------------
-async def play_quiz(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    quizzes = db_manager.get_all_quizzes()
-    if not quizzes:
-        await update.message.reply_text("No quizzes available yet. Use /createquiz to add one.")
-        return
-
-    context.user_data["quiz_index"] = 0
-    context.user_data["quizzes"] = quizzes
-    await send_question(update, context)
-
-async def send_question(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    index = context.user_data.get("quiz_index", 0)
-    quizzes = context.user_data.get("quizzes", [])
-
-    if index >= len(quizzes):
-        await update.message.reply_text("🎉 Quiz finished! Use /leaderboard to check scores.")
-        return
-
-    quiz = quizzes[index]
-    question = quiz["question"]
-    options = quiz["options"]
-
-    reply_markup = ReplyKeyboardMarkup(
-        [[opt] for opt in options],
-        one_time_keyboard=True,
-        resize_keyboard=True
+    await update.message.reply_text(
+        "👋 Welcome! Use /createquiz <name> to make a quiz.\n"
+        "Use /myquizzes to see your quizzes.\n"
+        "Use /leaderboard <quiz_id> to see leaderboard."
     )
 
-    context.user_data["current_quiz"] = quiz
-    await update.message.reply_text(f"Q{index+1}: {question}", reply_markup=reply_markup)
-
-async def handle_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_answer = update.message.text
-    quiz = context.user_data.get("current_quiz")
-
-    if not quiz:
+async def create_quiz(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    if not context.args:
+        await update.message.reply_text("⚠️ Usage: /createquiz <quiz_name>")
         return
+    quiz_name = " ".join(context.args)
+    quiz_id = db.create_quiz(user_id, quiz_name)
+    await update.message.reply_text(f"✅ Quiz created!\nID: {quiz_id}")
 
-    is_correct = user_answer.strip() == quiz["correct_answer"].strip()
-    db_manager.save_response(update.effective_user.id, quiz["question"], user_answer, is_correct)
+async def my_quizzes(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    quizzes = db.get_user_quizzes(user_id)
+    if not quizzes:
+        await update.message.reply_text("❌ You have no quizzes yet.")
+        return
+    msg = "📚 Your Quizzes:\n"
+    for q in quizzes:
+        msg += f"- {q['name']} (ID: {q['_id']})\n"
+    await update.message.reply_text(msg)
 
-    if is_correct:
-        await update.message.reply_text("✅ Correct!")
-    else:
-        await update.message.reply_text(f"❌ Wrong! Correct answer: {quiz['correct_answer']}")
-
-    context.user_data["quiz_index"] += 1
-    await send_question(update, context)
-
-# ---------------- LEADERBOARD ----------------
 async def leaderboard(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    scores = db_manager.get_leaderboard()
-    if not scores:
-        await update.message.reply_text("No leaderboard yet.")
+    if not context.args:
+        await update.message.reply_text("⚠️ Usage: /leaderboard <quiz_id>")
         return
+    quiz_id = context.args[0]
+    scores = db.get_leaderboard(quiz_id)
+    if not scores:
+        await update.message.reply_text("❌ No scores yet for this quiz.")
+        return
+    msg = f"🏆 Leaderboard for Quiz {quiz_id}\n"
+    for idx, s in enumerate(scores, start=1):
+        msg += f"{idx}. {s['username']} — {s['score']}\n"
+    await update.message.reply_text(msg)
 
-    text = "🏆 Leaderboard 🏆\n\n"
-    for idx, entry in enumerate(scores, start=1):
-        text += f"{idx}. User {entry['_id']} - {entry['score']} points\n"
-
-    await update.message.reply_text(text)
-
-# ---------------- MAIN ----------------
+# ================== MAIN ==================
 def main():
-    app = ApplicationBuilder().token(BOT_TOKEN).build()
+    app = Application.builder().token(BOT_TOKEN).build()
 
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("createquiz", create_quiz))
-    app.add_handler(CommandHandler("quiz", play_quiz))
+    app.add_handler(CommandHandler("myquizzes", my_quizzes))
     app.add_handler(CommandHandler("leaderboard", leaderboard))
 
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_quiz_creation))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_answer))
-
+    logger.info("🚀 Bot started successfully!")
     app.run_polling()
 
 if __name__ == "__main__":
