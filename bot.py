@@ -1,18 +1,21 @@
+from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, CallbackQueryHandler
+from handlers.quiz_handler import new_quiz, add_question, save_quiz_cmd
+from handlers.score_handler import start_quiz, answer_handler
+
 import os
-from telegram.ext import Application, CommandHandler, CallbackQueryHandler
-from handlers.quiz_handler import new_quiz, add_question, start_quiz
 
-TOKEN = os.getenv("BOT_TOKEN")  # Heroku me BOT_TOKEN set karna hoga
+TOKEN = os.getenv("BOT_TOKEN")
 
-def main():
-    app = Application.builder().token(TOKEN).build()
+app = ApplicationBuilder().token(TOKEN).build()
 
-    app.add_handler(CommandHandler("newquiz", new_quiz))
-    app.add_handler(CommandHandler("addq", add_question))
-    app.add_handler(CommandHandler("startquiz", start_quiz))
+# Quiz creation
+app.add_handler(CommandHandler("newquiz", new_quiz))
+app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, add_question))
+app.add_handler(CommandHandler("savequiz", save_quiz_cmd))
 
-    print("🤖 Bot running...")
-    app.run_polling()
+# Quiz playing
+app.add_handler(CommandHandler("startquiz", start_quiz))
+app.add_handler(CallbackQueryHandler(answer_handler))
 
-if __name__ == "__main__":
-    main()
+print("✅ Bot started")
+app.run_polling()
