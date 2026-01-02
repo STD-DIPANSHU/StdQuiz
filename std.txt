@@ -1,0 +1,64 @@
+import os
+from telegram.ext import (
+    Application,
+    CommandHandler,
+    CallbackQueryHandler,
+    MessageHandler,
+    ContextTypes,
+    filters,
+)
+
+from handlers.create_quiz import (
+    create_quiz_callback,
+    quiz_text_handler,
+    skip_description,
+    poll_handler,
+    add_question_callback,
+    done_command,
+    time_callback,
+    shuffle_callback,
+)
+
+BOT_TOKEN = os.getenv("BOT_TOKEN")
+
+
+# ───────────────── START COMMAND ─────────────────
+async def start(update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text(
+        "This bot will help you create a quiz with a series of multiple choice questions.",
+        reply_markup=(
+            __import__("telegram").InlineKeyboardMarkup([
+                [__import__("telegram").InlineKeyboardButton(
+                    "➕ Create New Quiz",
+                    callback_data="create_quiz"
+                )]
+            ])
+        )
+    )
+
+
+def main():
+    app = Application.builder().token(BOT_TOKEN).build()
+
+    # ───── Commands ─────
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("skip", skip_description))
+    app.add_handler(CommandHandler("done", done_command))
+
+    # ───── Callbacks ─────
+    app.add_handler(CallbackQueryHandler(create_quiz_callback, "^create_quiz$"))
+    app.add_handler(CallbackQueryHandler(add_question_callback, "^add_question$"))
+
+    app.add_handler(CallbackQueryHandler(time_callback, "^time_"))
+    app.add_handler(CallbackQueryHandler(shuffle_callback, "^shuffle_"))
+
+    # ───── Messages ─────
+    app.add_handler(MessageHandler(filters.POLL, poll_handler))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, quiz_text_handler))
+
+    print("🤖 IndianQuizBot is running...")
+    app.run_polling()
+
+
+if __name__ == "__main__":
+    main()
